@@ -15,6 +15,7 @@ from range_compression.range_compression import calc_area_from_mask
 RND_IMG_W = 4096 + 1
 RND_IMG_H = 4096 - 1
 
+
 def get_rand_image():
     width, height = RND_IMG_W, RND_IMG_H
     image = np.zeros((height, width), dtype=np.uint8)
@@ -33,8 +34,9 @@ def get_rand_image():
 
         pts = np.array(vertices, np.int32)
 
-        cv2.fillPoly(image, [pts], (color, ))
+        cv2.fillPoly(image, [pts], (color,))
     return image
+
 
 def _test_encode(image):
     height, width = image.shape
@@ -45,10 +47,14 @@ def _test_encode(image):
     assert len(rcm.row_indexes) == height
     return rcm
 
+
 def get_randxy(width, height):
     random_n = 10000
-    randx, randy = np.random.randint(0, width, random_n), np.random.randint(0, height, random_n)
+    randx, randy = np.random.randint(0, width, random_n), np.random.randint(
+        0, height, random_n
+    )
     return randx, randy
+
 
 def _test_find_mask(rcm, image, randx, randy):
     res = rcm.find_index(randx, randy)
@@ -66,24 +72,49 @@ def test_mask(benchmark):
     actual_res = _test_find_mask(rcm, image, randx, randy)
 
     # test invalid rxry
-    for rx in (-2**32, -2**31, -RND_IMG_W-1, -RND_IMG_W, -1, RND_IMG_W, RND_IMG_W+1, RND_IMG_W*1000, 2**31, 2**32):
-        for ry in (-2**32, -2**31, -RND_IMG_H-1, -RND_IMG_H, -1, RND_IMG_H, RND_IMG_H+1, RND_IMG_H*1000, 2**31, 2**32):
+    for rx in (
+        -(2**32),
+        -(2**31),
+        -RND_IMG_W - 1,
+        -RND_IMG_W,
+        -1,
+        RND_IMG_W,
+        RND_IMG_W + 1,
+        RND_IMG_W * 1000,
+        2**31,
+        2**32,
+    ):
+        for ry in (
+            -(2**32),
+            -(2**31),
+            -RND_IMG_H - 1,
+            -RND_IMG_H,
+            -1,
+            RND_IMG_H,
+            RND_IMG_H + 1,
+            RND_IMG_H * 1000,
+            2**31,
+            2**32,
+        ):
             print(rx, ry)
             assert rcm.find_index(np.array([rx]), np.array([ry])) == 0
 
-    benchmark.pedantic(_test_find_mask, args=(rcm, image, randx, randy), iterations=10, rounds=50)
-    
-    rcm.save('tests/output')
-    rcm2 = RangeCompressedMask.load('tests/output')
+    benchmark.pedantic(
+        _test_find_mask, args=(rcm, image, randx, randy), iterations=10, rounds=50
+    )
+
+    rcm.save("tests/output")
+    rcm2 = RangeCompressedMask.load("tests/output")
     assert np.array_equal(rcm.encodings[:, :3], rcm2.encodings)
-    
+
     actual_res2 = rcm2.find_index(randx, randy)
     assert np.array_equal(actual_res, actual_res2)
 
-    os.remove('tests/output/encodings.parquet')
-    os.remove('tests/output/row_indexes.parquet')
-    os.remove('tests/output/meta.json')
-    os.rmdir('tests/output')
+    os.remove("tests/output/encodings.parquet")
+    os.remove("tests/output/row_indexes.parquet")
+    os.remove("tests/output/meta.json")
+    os.rmdir("tests/output")
+
 
 def test_area():
     image = get_rand_image()
@@ -91,7 +122,9 @@ def test_area():
     res1 = calc_area_from_encodings(rcm.encodings, rcm.row_indexes)
     res2 = calc_area_from_mask(image)
     res3 = rcm.calc_area()
-    del res1[0]; del res2[0]; del res3[0]
+    del res1[0]
+    del res2[0]
+    del res3[0]
     print(res1)
     assert res1 == res2 == res3
     mask = rcm.to_mask()
@@ -119,3 +152,33 @@ def test_mask_overlay():
 
     assert np.all(mask_res == expected)
 
+
+def test_mask_overlay_large():
+    rng = np.random.default_rng(0)
+    img_a = np.zeros((256, 256), dtype=np.int32)
+    img_b = np.zeros((256, 256), dtype=np.int32)
+
+    idx = 1
+    for _ in range(50):
+        x, y = rng.integers(0, 236, size=2)
+        img_a[y : y + 20, x : x + 20] = idx
+        idx += 1
+
+    for _ in range(50):
+        x, y = rng.integers(0, 236, size=2)
+        img_b[y : y + 20, x : x + 20] = idx
+        idx += 1
+
+    expected = img_a.copy()
+    overlap = (img_a != 0) & (img_b != 0)
+    for v in np.unique(img_a[overlap]):
+        if v == 0:
+            continue
+        expected[img_a == v] = 0
+    expected[img_b != 0] = img_b[img_b != 0]
+
+    rcm_a = mask_encode(img_a)
+    rcm_b = mask_encode(img_b)
+    rcm_res = mask_overlay(rcm_a, rcm_b)
+
+    assert np.all(rcm_res.to_mask() == expected)
