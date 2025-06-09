@@ -4,7 +4,12 @@ import os
 import cv2
 import numpy as np
 
-from range_compression import RangeCompressedMask, mask_encode, calc_area_from_encodings
+from range_compression import (
+    RangeCompressedMask,
+    mask_encode,
+    calc_area_from_encodings,
+    mask_overlay,
+)
 from range_compression.range_compression import calc_area_from_mask
 
 RND_IMG_W = 4096 + 1
@@ -91,4 +96,26 @@ def test_area():
     assert res1 == res2 == res3
     mask = rcm.to_mask()
     assert np.all(image == mask)
+
+
+def test_mask_overlay():
+    img_a = np.zeros((10, 10), dtype=np.int32)
+    img_b = np.zeros((10, 10), dtype=np.int32)
+
+    img_a[1:4, 1:4] = 1
+    img_a[6:9, 6:9] = 2
+
+    img_b[2:5, 2:5] = 5
+
+    expected = img_a.copy()
+    expected[expected == 1] = 0
+    expected[img_b != 0] = img_b[img_b != 0]
+
+    rcm_a = mask_encode(img_a)
+    rcm_b = mask_encode(img_b)
+    rcm_res = mask_overlay(rcm_a, rcm_b)
+
+    mask_res = rcm_res.to_mask()
+
+    assert np.all(mask_res == expected)
 

@@ -307,5 +307,96 @@ def calc_area_from_mask_row(row: np.ndarray):
         areas[col_v] = areas.get(col_v, 0) + 1
     return areas
 
+def mask_overlay(rcm_a: RangeCompressedMask, rcm_b: RangeCompressedMask) -> RangeCompressedMask:
+    """把 ``rcm_b`` 覆盖到 ``rcm_a`` 上, 直接在区间压缩数据上完成。
+
+    ``rcm_a`` 与 ``rcm_b`` 的尺寸必须一致。若 ``rcm_b`` 与 ``rcm_a`` 的任
+    意细胞有交集, ``rcm_a`` 中这些细胞会被完全删除, 最终返回 ``rcm_a``
+    剩余细胞与 ``rcm_b`` 的并集。
+    """
+
+    if rcm_a.w != rcm_b.w or rcm_a.h != rcm_b.h:
+        raise ValueError("rcm_a and rcm_b must have the same shape")
+
+    w, h = rcm_a.w, rcm_a.h
+
+    enc_a = rcm_a.encodings
+    enc_b = rcm_b.encodings
+    rows_a = rcm_a.row_indexes
+    rows_b = rcm_b.row_indexes
+
+    # 1. 找出與 ``rcm_b`` 有交集的 ``rcm_a`` cell id
+    remove_ids = set()
+    for row in range(h):
+        sa, la = rows_a[row]
+        sb, lb = rows_b[row]
+        ia = 0
+        ib = 0
+        while ia < la and ib < lb:
+            a_start, a_end, a_val, _ = enc_a[sa + ia]
+            b_start, b_end, b_val, _ = enc_b[sb + ib]
+
+            if a_val == 0:
+                ia += 1
+                continue
+            if b_val == 0:
+                ib += 1
+                continue
+
+            if a_end < b_start:
+                ia += 1
+                continue
+            if b_end < a_start:
+                ib += 1
+                continue
+
+            remove_ids.add(int(a_val))
+
+            if a_end <= b_end:
+                ia += 1
+            else:
+                ib += 1
+
+    # 2. 根据 remove_ids 生成新的编码，并叠加 rcm_b
+    new_encodings = []
+    new_row_indexes = []
+
+    for row in range(h):
+        sa, la = rows_a[row]
+        sb, lb = rows_b[row]
+
+        row_segs = []
+
+        for i in range(la):
+            s, e, v, _ = enc_a[sa + i]
+            if v == 0 or int(v) in remove_ids:
+                continue
+            row_segs.append([int(s), int(e), int(v)])
+
+        for i in range(lb):
+            s, e, v, _ = enc_b[sb + i]
+            if v == 0:
+                continue
+            row_segs.append([int(s), int(e), int(v)])
+
+        row_segs.sort(key=lambda x: x[0])
+
+        if not row_segs:
+            row_segs = [[0, w - 1, 0]]
+
+        start_index = len(new_encodings)
+        new_encodings.extend(row_segs)
+        new_row_indexes.append([start_index, len(row_segs)])
+
+    new_encodings_np = np.array(new_encodings, dtype="int32")
+    new_row_indexes_np = np.array(new_row_indexes, dtype="int32")
+
+    return RangeCompressedMask(
+        w=w,
+        h=h,
+        encodings=new_encodings_np,
+        row_indexes=new_row_indexes_np,
+    )
+
 rcm_load = RangeCompressedMask.load
 rcm_find_index = RangeCompressedMask.find_index
